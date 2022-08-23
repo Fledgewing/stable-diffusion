@@ -70,9 +70,9 @@ def main():
     # preload the model
     if not debugging:
         t2i.load_model()
-    print("\n* Initialization done! Awaiting your command (-h for help, 'q' to quit, 'cd' to change output dir, 'pwd' to print output dir)...")
+    print("\n* Initialization done! Awaiting your command (-h for help, q to quit)...")
 
-    log_path   = os.path.join(opt.outdir,'..','dream_log.txt')
+    log_path   = os.path.join(opt.outdir,"dream_log.txt")
     with open(log_path,'a') as log:
         cmd_parser = create_cmd_parser()
         main_loop(t2i,cmd_parser,log)
@@ -99,22 +99,9 @@ def main_loop(t2i,parser,log):
         if len(elements)==0:
             continue
         
-        if elements[0]=='q':
+        if elements[0]=='q':  # 
             done = True
             break
-
-        if elements[0]=='cd' and len(elements)>1:
-            if os.path.exists(elements[1]):
-                print(f"setting image output directory to {elements[1]}")
-                t2i.outdir=elements[1]
-            else:
-                print(f"directory {elements[1]} does not exist")
-            continue
-
-        if elements[0]=='pwd':
-            print(f"current output directory is {t2i.outdir}")
-            continue
-        
         if elements[0].startswith('!dream'): # in case a stored prompt still contains the !dream command
             elements.pop(0)
             
@@ -137,7 +124,21 @@ def main_loop(t2i,parser,log):
         except SystemExit:
             parser.print_help()
             continue
-        if len(opt.prompt)==0:
+
+        if opt.inputfile != None:
+            inputfile = open(opt.inputfile, "r")
+            del opt.inputfile
+            for line in inputfile.readlines():
+                print(line)
+                opt.prompt = line.strip()
+                if opt.init_img is None:
+                    results = t2i.txt2img(**vars(opt))
+                else:
+                    results = t2i.img2img(**vars(opt))
+                print("Outputs:")
+                write_log_message(t2i,opt,results,log)
+            continue
+        elif len(opt.prompt)==0:
             print("Try again with a prompt!")
             continue
 
@@ -169,13 +170,7 @@ def write_log_message(t2i,opt,results,logfile):
     img_num    = 1
     batch_size = opt.batch_size or t2i.batch_size
     seenit     = {}
-
-    seeds = [a[1] for a in results]
-    if batch_size > 1:
-        seeds = f"(seeds for each batch row: {seeds})"
-    else:
-        seeds = f"(seeds for individual images: {seeds})"
-
+    
     for r in results:
         seed = r[1]
         log_message = (f'{r[0]}: {prompt_str} -S{seed}')
@@ -194,10 +189,7 @@ def write_log_message(t2i,opt,results,logfile):
         if r[0] not in seenit:
             seenit[r[0]] = True
             try:
-                if opt.grid:
-                    _write_prompt_to_png(r[0],f'{prompt_str} -g -S{seed} {seeds}')
-                else:
-                    _write_prompt_to_png(r[0],f'{prompt_str} -S{seed}')
+                _write_prompt_to_png(r[0],f'{prompt_str} -S{seed}')
             except FileNotFoundError:
                 print(f"Could not open file '{r[0]}' for reading")
 
@@ -271,12 +263,16 @@ def create_cmd_parser():
     parser.add_argument('-i','--individual',action='store_true',help="generate individual files (default)")
     parser.add_argument('-I','--init_img',type=str,help="path to input image (supersedes width and height)")
     parser.add_argument('-f','--strength',default=0.75,type=float,help="strength for noising/unnoising. 0.0 preserves image exactly, 1.0 replaces it completely")
+    parser.add_argument('-file',
+                        '--inputfile',
+                        type=str,
+                        default=None,
+                        help="file to load for prompts, one per line")
     return parser
 
 if readline_available:
     def setup_readline():
-        readline.set_completer(Completer(['cd','pwd',
-                                          '--steps','-s','--seed','-S','--iterations','-n','--batch_size','-b',
+        readline.set_completer(Completer(['--steps','-s','--seed','-S','--iterations','-n','--batch_size','-b',
                                           '--width','-W','--height','-H','--cfg_scale','-C','--grid','-g',
                                           '--individual','-i','--init_img','-I','--strength','-f']).complete)
         readline.set_completer_delims(" ")
@@ -298,13 +294,8 @@ if readline_available:
             return
 
         def complete(self,text,state):
-            buffer = readline.get_line_buffer()
-            
-            if text.startswith(('-I','--init_img')):
-                return self._path_completions(text,state,('.png'))
-
-            if buffer.strip().endswith('cd') or text.startswith(('.','/')):
-                return self._path_completions(text,state,())
+            if text.startswith('-I') or text.startswith('--init_img'):
+                return self._image_completions(text,state)
 
             response = None
             if state == 0:
@@ -324,14 +315,12 @@ if readline_available:
                 response = None
             return response
 
-        def _path_completions(self,text,state,extensions):
+        def _image_completions(self,text,state):
             # get the path so far
             if text.startswith('-I'):
                 path = text.replace('-I','',1).lstrip()
             elif text.startswith('--init_img='):
                 path = text.replace('--init_img=','',1).lstrip()
-            else:
-                path = text
 
             matches  = list()
 
@@ -348,7 +337,7 @@ if readline_available:
                     if full_path.startswith(path):
                         if os.path.isdir(full_path):
                             matches.append(os.path.join(os.path.dirname(text),n)+'/')
-                        elif n.endswith(extensions):
+                        elif n.endswith('.png'):
                             matches.append(os.path.join(os.path.dirname(text),n))
 
             try:
@@ -356,6 +345,7 @@ if readline_available:
             except IndexError:
                 response = None
             return response
+        
 
 if __name__ == "__main__":
     main()
